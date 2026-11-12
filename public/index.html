@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Mandate: a PayPal-funded spending leash for AI agents</title>
+<style>
+:root{--bg:#f4f7fb;--ink:#101a33;--mute:#56627f;--line:#d3dbea;--card:#fff;--blue:#0b5fff;--ok:#0e7c58;--bad:#c4222a}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1322;--ink:#e7ecf8;--mute:#8f9cbc;--line:#25304c;--card:#141c32;--blue:#5b8cff;--ok:#3ccf9a;--bad:#ff7b80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}h1{font:700 2rem/1.15 Georgia,serif;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 20px}.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+h2{font-size:1.05rem;margin:0 0 10px}label{font-weight:600;font-size:.9rem;display:block;margin:8px 0 3px}
+input,select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+.g{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:600px){.g{grid-template-columns:1fr}}
+button{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:9px 16px;font:600 .95rem inherit;cursor:pointer;margin:10px 8px 0 0}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}button.danger{background:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.bar{height:14px;border-radius:7px;background:var(--line);overflow:hidden;margin:6px 0}.bar i{display:block;height:100%;background:var(--blue)}
+.ev{border-left:4px solid var(--line);padding:6px 10px;margin:8px 0;font-size:.92rem}.ev.A{border-color:var(--ok)}.ev.B{border-color:var(--bad)}
+.A b{color:var(--ok)}.B b{color:var(--bad)}.h{font:.72rem ui-monospace,Consolas,monospace;color:var(--mute);word-break:break-all}.m{color:var(--mute);font-size:.9rem}
+[hidden]{display:none!important}.chk{display:flex;gap:8px;align-items:center;font-weight:400;margin:10px 0 0}.chk input{width:auto}
+</style></head><body><main>
+<h1>Agent Mandate</h1>
+<p class="sub">Give any AI agent a PayPal-funded allowance with hard rules. The agent can only spend through a gateway that checks every purchase. You can revoke it instantly, and unused money is refunded to you through PayPal.</p>
+
+<section class="box"><h2>1. Fund a mandate</h2>
+<div class="g"><div><label for="cap">Allowance (USD, max 500)</label><input id="cap" type="number" value="100"></div>
+<div><label for="pp">Max per purchase (USD)</label><input id="pp" type="number" value="60"></div>
+<div><label for="hrs">Valid for (hours)</label><input id="hrs" type="number" value="24"></div></div>
+<label for="cat">Allowed categories (comma separated)</label><input id="cat" value="home-decoration,furniture,mobile-accessories,laptops">
+<div id="pay" style="margin-top:12px"></div><div class="m" id="fm"></div></section>
+
+<section class="box" id="agentBox" hidden><h2>2. Let the agent shop</h2>
+<label for="task">Task</label><input id="task" value="desk lamp, laptop stand and mouse">
+<div class="g"><div><label for="ag">Agent</label><select id="ag"><option value="claude">Claude (real AI)</option><option value="naive">Naive agent (obeys any text)</option></select></div></div>
+<label class="chk"><input id="atk" type="checkbox"> Red-team: hide a malicious instruction in one product listing</label>
+<button id="run">Run agent</button></section>
+
+<section class="box" id="stBox" hidden><h2>3. Mandate status</h2>
+<div id="st"></div><div class="bar"><i id="fill" style="width:0"></i></div><div class="m" id="bal"></div>
+<div id="ledger"></div>
+<button class="danger" id="rev">Revoke now</button><button class="alt" id="close">Close and refund unused</button></section>
+
+<script>
+const $=id=>document.getElementById(id);let cfg,mid,token;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');return d});
+const form=()=>({cap:$('cap').value,perPurchase:$('pp').value,hours:$('hrs').value,categories:$('cat').value});
+
+function draw(d){
+  $('stBox').hidden=false;$('st').innerHTML=`Status: <b>${esc(d.status)}</b>`;
+  $('fill').style.width=(100*d.spent/d.cap)+'%';$('bal').textContent=`Spent $${d.spent.toFixed(2)} of $${d.cap.toFixed(2)}. Remaining $${d.remaining.toFixed(2)}.`+(d.refund?` Refunded $${d.refund.amount.toFixed(2)} (${d.refund.status}).`:'');
+  $('ledger').innerHTML=d.ledger.map(e=>{const k=e.decision==='BLOCKED'?'B':'A';
+    return `<div class="ev ${k}"><b>${esc(e.decision)}</b> ${esc(e.action.replace(/_/g,' ').toLowerCase())} ${e.item?esc(e.item)+' ($'+e.amount+')':(e.amount?'$'+e.amount:'')}
+    ${e.reasons&&e.reasons.length?'<div class="m">'+e.reasons.map(esc).join('; ')+'</div>':''}<div class="h">hash ${e.hash}</div></div>`}).join('');
+  const live=d.status==='active';$('rev').hidden=!live;$('close').hidden=!(live||d.status==='revoked');$('run').disabled=!live;
+}
+async function activated(d){token=d.token;$('agentBox').hidden=false;$('fm').textContent='Funded. Mandate token issued to the agent.';draw(d)}
+
+fetch('/api/config').then(r=>r.json()).then(c=>{cfg=c;
+  if(c.mock||!c.clientId){$('fm').textContent='Mock mode: no PayPal credentials found.';
+    const b=document.createElement('button');b.textContent='Simulate funding';b.onclick=async()=>{try{const m=await post('/api/mandates',form());mid=m.id;activated(await post(`/api/mandates/${mid}/fund`))}catch(e){$('fm').textContent=e.message}};$('pay').appendChild(b);return}
+  const s=document.createElement('script');s.src='https://www.paypal.com/sdk/js?client-id='+encodeURIComponent(c.clientId)+'&currency=USD';
+  s.onload=()=>paypal.Buttons({
+    createOrder:async()=>{const m=await post('/api/mandates',form());mid=m.id;return m.orderId},
+    onApprove:async()=>activated(await post(`/api/mandates/${mid}/fund`)),
+    onError:e=>$('fm').textContent='PayPal error: '+e}).render('#pay');
+  document.head.appendChild(s)});
+
+$('run').onclick=async()=>{$('run').disabled=true;try{const d=await post('/api/agent/run',{token,task:$('task').value,agent:$('ag').value,attack:$('atk').checked});draw(d)}catch(e){alert(e.message)}};
+$('rev').onclick=async()=>draw(await post(`/api/mandates/${mid}/revoke`));
+$('close').onclick=async()=>{try{draw(await post(`/api/mandates/${mid}/close`))}catch(e){alert(e.message)}};
+</script></main></body></html>
